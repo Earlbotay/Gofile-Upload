@@ -11,7 +11,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-GOFILE_API = "https://gofile.io/uploadFile"
+GOFILE_API = "https://upload.gofile.io/uploadfile"
 
 
 def is_zip_file(filename: str) -> bool:
