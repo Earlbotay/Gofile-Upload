@@ -36,6 +36,14 @@ jobs:
           restore-keys: |
             bot-cache-
 
+      - name: Cache Telegram Data
+        uses: actions/cache@v4
+        with:
+          path: telegram-data
+          key: tg-data-${{ github.run_id }}
+          restore-keys: |
+            tg-data-
+
       - name: Run Telegram Bot API Server
         run: |
           # Create shared data directory
@@ -67,8 +75,14 @@ jobs:
       - name: Run Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          # Path seen by the bot on the runner host
           TELEGRAM_DATA_DIR: ${{ github.workspace }}/telegram-data
         run: |
           mkdir -p bot_cache
           python bot.py
+
+      - name: Save Telegram Data Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: telegram-data
+          key: tg-data-${{ github.run_id }}
