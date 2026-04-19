@@ -68,16 +68,24 @@ def upload_to_gofile(file_path: Path):
 
 def upload_to_catbox(file_path: Path):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
+        # Bersihkan nama fail (tukar ruang ke underscore)
+        clean_name = file_path.name.replace(" ", "_")
         with file_path.open("rb") as f:
-            resp = requests.post(CATBOX_API, data={"req": "upload"}, files={"fileToUpload": (file_path.name, f)}, headers=headers, timeout=600)
+            files = {
+                "req": (None, "upload"),
+                "fileToUpload": (clean_name, f)
+            }
+            # Jangan hantar headers manual, biar requests uruskan boundary
+            resp = requests.post(CATBOX_API, files=files, timeout=600)
         return resp.text.strip()
     except Exception as e: return f"Catbox Error: {str(e)}"
 
 def upload_to_tempsh(file_path: Path):
     try:
+        clean_name = file_path.name.replace(" ", "_")
         with file_path.open("rb") as f:
-            resp = requests.post(TEMPSH_API, files={"file": (file_path.name, f)}, timeout=600)
+            files = {"file": (clean_name, f)}
+            resp = requests.post(TEMPSH_API, files=files, timeout=600)
         return resp.text.strip()
     except Exception as e: return f"Temp.sh Error: {str(e)}"
 
