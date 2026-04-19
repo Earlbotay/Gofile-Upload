@@ -97,8 +97,14 @@ async def process_media(message):
 
     file_id = attachment['file_id']
     filename = attachment.get('file_name') or f"file_{attachment['file_unique_id']}"
+    file_size_tg = attachment.get('file_size', 0)
+    file_size_tg_mb = file_size_tg / (1024*1024)
     
-    status_resp = tg_api_call("sendMessage", {"chat_id": chat_id, "text": f"⏳ Memproses `{filename}`...", "parse_mode": "Markdown"})
+    msg_text = f"⏳ Memproses `{filename}` (`{file_size_tg_mb:.2f} MB`)..."
+    if not USE_LOCAL_API and file_size_tg_mb > 20:
+        msg_text += "\n\n⚠️ **Amaran:** Fail > 20MB mungkin gagal tanpa Local API Server!"
+    
+    status_resp = tg_api_call("sendMessage", {"chat_id": chat_id, "text": msg_text, "parse_mode": "Markdown"})
     if not status_resp: return
     status_msg_id = status_resp['result']['message_id']
     
