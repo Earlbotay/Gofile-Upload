@@ -124,22 +124,20 @@ async def process_media(message):
         server_path = file_info['result']['file_path']
         
         if USE_LOCAL_API:
-            # LALUAN NATIVE (Mengikut Rujukan)
-            # Storan Local API: TELEGRAM_DATA_DIR/botTOKEN/server_path
-            host_file_path = Path(TELEGRAM_DATA_DIR) / f"bot{TELEGRAM_TOKEN}" / server_path.lstrip('/')
+            # Jika server_path adalah absolute path (biasanya dalam Local API)
+            if server_path.startswith('/'):
+                host_file_path = Path(server_path)
+            else:
+                # Jika relative, cuba bina laluan (bergantung kepada setting server)
+                host_file_path = Path(TELEGRAM_DATA_DIR) / f"bot{TELEGRAM_TOKEN}" / server_path.lstrip('/')
 
-            found = False
-            for _ in range(5): # Kurangkan cubaan kerana Local API sepatutnya pantas
-                if host_file_path.exists():
-                    found = True
-                    break
-                time.sleep(1)
-
-            if found:
+            if host_file_path.exists():
                 shutil.copy2(host_file_path, cached_path)
             else:
                 # Sandaran muat turun melalui URL Local
-                file_download_url = f"{LOCAL_API_SERVER}/file/bot{TELEGRAM_TOKEN}/{server_path}"
+                # Kita perlu pastikan laluan dalam URL tidak bermula dengan double slash
+                clean_path = server_path.lstrip('/')
+                file_download_url = f"{LOCAL_API_SERVER}/file/bot{TELEGRAM_TOKEN}/{clean_path}"
                 with requests.get(file_download_url, stream=True, timeout=600) as resp:
                     resp.raise_for_status()
                     with open(cached_path, 'wb') as f:
