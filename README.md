@@ -1,21 +1,21 @@
-# Telegram GoFile Bot (Updated)
+# 🚀 Multi-Cloud-Uploader Bot
 
-Bot Telegram ini akan:
-- Terima media (document/photo)
-- Zip fail jika belum `.zip`
-- Upload ke GoFile terus
-- Jika fail sudah `.zip`, terus upload
+Bot Telegram hebat yang membolehkan anda muat naik sebarang jenis fail/media ke pelbagai cloud storage serentak!
 
-## Fail penting
-- `bot.py`
-- `requirements.txt`
-- `.github/workflows/bot.yml`
+## ✨ Ciri-ciri Utama
+- ☁️ **Multi-Cloud Support:** Muat naik serentak ke **Gofile**, **Catbox**, dan **Temp.sh**.
+- 📂 **Semua Format:** Menyokong Dokumen, Gambar, Video, Audio, Voice, dan Video Notes.
+- ⚡ **Pantas:** Muat naik dilakukan secara selari (*parallel*) untuk menjimatkan masa.
+- 🔄 **Auto-Run:** Berjalan secara automatik menggunakan GitHub Actions setiap 5 jam.
 
-## GitHub Secrets
-- `TELEGRAM_TOKEN`
+## 🛠️ Cara Guna
+1. Hantar sebarang fail kepada bot anda di Telegram.
+2. Tunggu bot memproses muat turun dan muat naik.
+3. Bot akan memberikan pautan muat turun bagi setiap cloud yang disokong.
 
-## Cara guna
-Push ke branch `main` atau tunggu cron setiap 5 jam. Workflow akan batalkan run lama jika ada run baru.
+## ⚙️ Konfigurasi (GitHub Secrets)
+Pastikan anda telah menetapkan *secret* berikut di dalam repositori anda:
+- `TELEGRAM_TOKEN`: Token bot anda daripada @BotFather.
 
-## Nota
-GitHub Actions sesuai untuk polling temporari, bukan hosting 24/7.
+---
+© 2026 EarlBotay Project | [GitHub](https://github.com/Earlbotay/Multi-Cloud-Uploader)
