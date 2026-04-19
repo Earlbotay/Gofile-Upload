@@ -120,10 +120,10 @@ async def process_media(message):
         if USE_LOCAL_API:
             # LALUAN NATIVE (Mengikut Rujukan)
             # Storan Local API: TELEGRAM_DATA_DIR/botTOKEN/server_path
-            host_file_path = Path(TELEGRAM_DATA_DIR) / server_path.lstrip('/')
+            host_file_path = Path(TELEGRAM_DATA_DIR) / f"bot{TELEGRAM_TOKEN}" / server_path.lstrip('/')
 
             found = False
-            for _ in range(15):
+            for _ in range(5): # Kurangkan cubaan kerana Local API sepatutnya pantas
                 if host_file_path.exists():
                     found = True
                     break
@@ -134,18 +134,28 @@ async def process_media(message):
             else:
                 # Sandaran muat turun melalui URL Local
                 file_download_url = f"{LOCAL_API_SERVER}/file/bot{TELEGRAM_TOKEN}/{server_path}"
-                resp = requests.get(file_download_url, stream=True, timeout=600)
-                with open(cached_path, 'wb') as f: shutil.copyfileobj(resp.raw, f)
+                with requests.get(file_download_url, stream=True, timeout=600) as resp:
+                    resp.raise_for_status()
+                    with open(cached_path, 'wb') as f:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk: f.write(chunk)
         else:
             file_download_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{server_path}"
-            resp = requests.get(file_download_url, stream=True, timeout=600)
-            with open(cached_path, 'wb') as f: shutil.copyfileobj(resp.raw, f)
+            with requests.get(file_download_url, stream=True, timeout=600) as resp:
+                resp.raise_for_status()
+                with open(cached_path, 'wb') as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk: f.write(chunk)
 
-        if not cached_path.exists():
-            raise FileNotFoundError("Fail tidak berjaya diproses.")
+        if not cached_path.exists() or os.path.getsize(cached_path) == 0:
+            raise Exception("Fail tidak berjaya diproses atau saiznya 0 bait.")
 
-        file_size_mb = os.path.getsize(cached_path) / (1024*1024)
+        file_size_bytes = os.path.getsize(cached_path)
+        file_size_mb = file_size_bytes / (1024*1024)
         file_size_str = f"{file_size_mb:.2f} MB"
+        
+        if file_size_bytes < 100: # Jika sangat kecil, kemungkinan besar ia fail ralat
+             print(f"Amaran: Saiz fail sangat kecil ({file_size_bytes} bait).")
         
         index = load_index()
         index[filename] = {"size": file_size_str, "id": file_id}
