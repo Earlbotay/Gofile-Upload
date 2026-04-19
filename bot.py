@@ -8,10 +8,10 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-# HARDCODED LOCAL API SETTINGS TO PREVENT GITHUB MASKING ERRORS
+# USE ENVIRONMENT VARIABLES OR DEFAULTS
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 LOCAL_API_SERVER = "http://127.0.0.1:8081"
-TELEGRAM_DATA_DIR = "/home/runner/work/Multi-Cloud-Uploader/Multi-Cloud-Uploader/telegram-data"
+TELEGRAM_DATA_DIR = os.getenv("TELEGRAM_DATA_DIR", "/home/runner/work/Multi-Cloud-Uploader/Multi-Cloud-Uploader/telegram-data")
 
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
@@ -70,9 +70,19 @@ async def handle_any_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file_obj = await attachment.get_file()
         
-        # Mapping path from Docker to Host
+        # In local mode, file_path is an absolute path on the API server.
+        # We need to map it to the host path.
+        # API Server Path: /var/lib/telegram-bot-api/BOT_TOKEN/documents/file...
+        # Host Path: TELEGRAM_DATA_DIR/BOT_TOKEN/documents/file...
         server_path = file_obj.file_path
-        host_file_path = Path(TELEGRAM_DATA_DIR) / server_path.lstrip('/')
+        
+        # Remove the internal container prefix
+        container_base = "/var/lib/telegram-bot-api"
+        if server_path.startswith(container_base):
+            relative_path = server_path[len(container_base):].lstrip('/')
+            host_file_path = Path(TELEGRAM_DATA_DIR) / relative_path
+        else:
+            host_file_path = Path(TELEGRAM_DATA_DIR) / server_path.lstrip('/')
 
         if not host_file_path.exists():
             raise FileNotFoundError(f"File not found on host: {host_file_path}")
@@ -105,7 +115,9 @@ async def handle_any_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Ralat: {str(e)}")
 
 def main():
-    if not TELEGRAM_TOKEN: return
+    if not TELEGRAM_TOKEN:
+        print("❌ Ralat: TELEGRAM_TOKEN tidak dijumpai dalam persekitaran!")
+        return
     
     # Use direct string for base_url to avoid GitHub Actions masking issues
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).base_url("http://127.0.0.1:8081").local_mode(True).build()

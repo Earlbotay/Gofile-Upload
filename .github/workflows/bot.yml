@@ -3,6 +3,8 @@ name: Multi-Cloud Bot with Local API
 on:
   push:
     branches: [ main ]
+  schedule:
+    - cron: '0 */5 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -40,6 +42,7 @@ jobs:
           mkdir -p $(pwd)/telegram-data
           chmod 777 $(pwd)/telegram-data
           
+          echo "Starting Telegram Bot API Server..."
           docker run -d -p 8081:8081 --name telegram-bot-api \
             -v $(pwd)/telegram-data:/var/lib/telegram-bot-api \
             -e TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }} \
@@ -47,8 +50,17 @@ jobs:
             aiogram/telegram-bot-api:latest \
             --local --dir /var/lib/telegram-bot-api
           
-          # Wait for server to start
-          sleep 15
+          # Wait for server to start and check health
+          for i in {1..30}; do
+            if docker logs telegram-bot-api 2>&1 | grep -q "listening on port 8081"; then
+              echo "Server is up and running!"
+              break
+            fi
+            echo "Waiting for server to start... ($i/30)"
+            sleep 2
+          done
+          
+          docker ps -a
           docker logs telegram-bot-api
 
       - name: Run Bot
