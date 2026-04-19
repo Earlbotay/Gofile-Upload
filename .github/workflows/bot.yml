@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: bot-concurrency
+  cancel-in-progress: true
+
 jobs:
   run:
     runs-on: ubuntu-latest
