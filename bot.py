@@ -1,24 +1,20 @@
 import asyncio
 import os
-import requests
 import json
 import shutil
 import time
-import re
-import mimetypes
 import subprocess
+import requests
+import mimetypes
 from pathlib import Path
 
-# KONFIGURASI API
+# --- KONFIGURASI ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-LOCAL_API_SERVER = "http://127.0.0.1:8081"
-TELEGRAM_DATA_DIR = os.getenv("TELEGRAM_DATA_DIR", "/home/runner/tg-api-data")
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
-CACHE_DIR.mkdir(exist_ok=True)
 
+CACHE_DIR.mkdir(exist_ok=True)
 if not CACHE_INDEX.exists():
     with open(CACHE_INDEX, "w") as f: json.dump({}, f)
 
@@ -30,112 +26,98 @@ def load_index():
 def save_index(index):
     with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
-def wait_for_local_api():
-    if not TELEGRAM_TOKEN: return False
-    for _ in range(3):
-        try:
-            resp = requests.get(f"{LOCAL_API_SERVER}/bot{TELEGRAM_TOKEN}/getMe", timeout=2)
-            if resp.status_code == 200: return True
-        except: pass
-        time.sleep(1)
-    return False
-
-USE_LOCAL_API = False
-API_URL = BASE_URL
-
-def tg_api_call(method, data=None, files=None):
+def tg_api_call(method, data=None):
     try:
-        url = f"{API_URL}/{method}"
-        resp = requests.post(url, data=data, files=files, timeout=60)
+        url = f"{BASE_URL}/{method}"
+        resp = requests.post(url, data=data, timeout=60)
         return resp.json()
-    except: return None
+    except Exception as e:
+        print(f"API Error ({method}): {e}")
+        return None
 
 def upload_to_earlstore(file_path: Path):
+    """Memuat naik ke EarlStore menggunakan curl untuk hasil pautan 'pure'."""
     try:
         url = "https://temp.earlstore.online/api/upload"
-        # Kita guna curl secara terus untuk menjamin pautan "pure" mengikut dokumentasi
         cmd = [
             "curl", "-s",
-            "-F", f"file=@{file_path.absolute()}",
+            "-F", f"file=@{file_path.name}",
             url
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Jalankan curl dari dalam folder fail berada
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(file_path.parent))
         if result.returncode != 0:
-            return f"Curl Error: {result.stderr}"
+            return f"❌ Curl Error: {result.stderr}"
             
         data = json.loads(result.stdout)
-        if "url" in data:
-            return data["url"]
-        return f"Ralat: {result.stdout}"
+        return data.get("url") or f"❌ Error API: {result.stdout}"
     except Exception as e:
-        return f"EarlStore Error: {str(e)}"
+        return f"❌ EarlStore Error: {str(e)}"
 
 async def process_media(message):
     chat_id = message['chat']['id']
     attachment = None
+    
+    # Kenalpasti jenis media
     for mt in ['document', 'video', 'audio', 'voice', 'video_note', 'animation', 'photo']:
         if mt in message:
             attachment = message[mt]
             if mt == 'photo': attachment = attachment[-1]
             break
+            
     if not attachment: return
 
     file_id = attachment['file_id']
     file_unique_id = attachment['file_unique_id']
-    file_size_str = f"{attachment.get('file_size', 0) / (1024*1024):.2f} MB"
+    file_size_mb = attachment.get('file_size', 0) / (1024 * 1024)
+    file_size_str = f"{file_size_mb:.2f} MB"
 
-    # Dapatkan maklumat fail untuk tahu extension sebenar
+    # 1. Dapatkan maklumat fail (laluan asal dari Telegram)
     file_info = tg_api_call("getFile", {"file_id": file_id})
     if not file_info or not file_info.get('ok'):
-        tg_api_call("sendMessage", {"chat_id": chat_id, "text": "❌ Gagal mendapatkan maklumat fail daripada Telegram."})
+        tg_api_call("sendMessage", {"chat_id": chat_id, "text": "❌ Gagal mendapatkan info fail."})
         return
-    
+
     tg_file_path = file_info['result']['file_path']
-    ext = os.path.splitext(tg_file_path)[1]
-    if not ext: ext = ".bin"
-
-    # Guna ID unik + extension
+    ext = os.path.splitext(tg_file_path)[1] or ".bin"
     filename = f"{file_unique_id}{ext}"
-    
-    index = load_index()
     cached_path = CACHE_DIR / filename
-    
-    is_cached = False
-    if file_unique_id in index:
-        potential_path = Path(index[file_unique_id]['path'])
-        if potential_path.exists():
-            if potential_path.suffix != ext:
-                new_path = potential_path.with_suffix(ext)
-                potential_path.rename(new_path)
-                index[file_unique_id]['path'] = str(new_path)
-                save_index(index)
-                cached_path = new_path
-            else:
-                cached_path = potential_path
-            is_cached = True
 
-    status_text = f"⏳ Memproses `{filename}`..."
-    if is_cached: status_text += " (Dari Cache ⚡)"
+    # 2. Semak Cache
+    index = load_index()
+    is_cached = file_unique_id in index and Path(index[file_unique_id]['path']).exists()
     
-    status = tg_api_call("sendMessage", {"chat_id": chat_id, "text": status_text, "parse_mode": "Markdown"})
+    if is_cached:
+        cached_path = Path(index[file_unique_id]['path'])
+        status_msg = f"⏳ Memproses `{filename}`... (⚡ Cache)"
+    else:
+        status_msg = f"⏳ Memproses `{filename}`..."
+
+    status = tg_api_call("sendMessage", {"chat_id": chat_id, "text": status_msg, "parse_mode": "Markdown"})
     if not status: return
     status_id = status['result']['message_id']
-    
+
     try:
+        # 3. Muat Turun (Jika tiada dalam cache)
         if not is_cached:
+            tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"📥 Memuat turun `{filename}` ({file_size_str})...", "parse_mode": "Markdown"})
+            
             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{tg_file_path}"
-            r = requests.get(file_url, stream=True)
-            with open(cached_path, 'wb') as f: shutil.copyfileobj(r.raw, f)
+            with requests.get(file_url, stream=True) as r:
+                with open(cached_path, 'wb') as f:
+                    shutil.copyfileobj(r.raw, f)
             
             index[file_unique_id] = {"path": str(cached_path), "name": filename}
             save_index(index)
 
-        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke EarlStore...", "parse_mode": "Markdown"})
-
-        # Jalankan muat naik curl
-        earl_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_earlstore, cached_path)
+        # 4. Muat Naik ke EarlStore
+        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik ke EarlStore...", "parse_mode": "Markdown"})
         
+        loop = asyncio.get_event_loop()
+        earl_link = await loop.run_in_executor(None, upload_to_earlstore, cached_path)
+
+        # 5. Papar Hasil Akhir
         tg_api_call("editMessageText", {
             "chat_id": chat_id, "message_id": status_id,
             "text": (
@@ -144,17 +126,19 @@ async def process_media(message):
                 f"📊 **Saiz:** `{file_size_str}`\n\n"
                 f"🌐 **Pautan:** {earl_link}"
             ),
-            "parse_mode": "Markdown", "disable_web_page_preview": True
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True
         })
+
     except Exception as e:
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"❌ Ralat: {str(e)}"})
 
 async def main():
-    global USE_LOCAL_API, API_URL
-    USE_LOCAL_API = wait_for_local_api()
-    API_URL = f"{LOCAL_API_SERVER}/bot{TELEGRAM_TOKEN}" if USE_LOCAL_API else BASE_URL
-    print(f"Bot dimulakan.")
-    
+    if not TELEGRAM_TOKEN:
+        print("Ralat: TELEGRAM_TOKEN tidak ditetapkan!")
+        return
+        
+    print("🤖 Bot EarlStore dimulakan...")
     offset = 0
     while True:
         try:
@@ -165,7 +149,9 @@ async def main():
                     if 'message' in u:
                         asyncio.create_task(process_media(u['message']))
             await asyncio.sleep(0.5)
-        except: await asyncio.sleep(5)
+        except Exception as e:
+            print(f"Loop error: {e}")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
