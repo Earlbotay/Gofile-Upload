@@ -67,19 +67,26 @@ def upload_to_gofile(file_path: Path):
 
 def upload_to_tempsh(file_path: Path):
     try:
-        # Nama fail yang sudah bersih
         filename = file_path.name
-        # Guna kaedah PUT ke /upload/nama_fail untuk paksa server ikut nama kita
-        url = f"{TEMPSH_API}/{filename}"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         
         with file_path.open("rb") as f:
-            resp = requests.put(url, data=f, timeout=600)
+            # Kaedah 1: POST Multipart (Paling standard)
+            files = {'file': (filename, f)}
+            resp = requests.post(TEMPSH_API, files=files, headers=headers, timeout=600)
+            
+            if resp.status_code == 200 and "http" in resp.text:
+                return resp.text.strip()
+            
+            # Kaedah 2: PUT (Jika POST gagal/502)
+            f.seek(0)
+            put_url = f"https://temp.sh/{filename}"
+            resp = requests.put(put_url, data=f, headers=headers, timeout=600)
             
             if resp.status_code == 200:
-                link = resp.text.strip()
-                return link
-            else:
-                return f"Temp.sh Error: Status {resp.status_code}"
+                return resp.text.strip()
+                
+        return f"Temp.sh Error: Status {resp.status_code}"
     except Exception as e: return f"Temp.sh Error: {str(e)}"
 
 def sanitize_filename(name: str):
