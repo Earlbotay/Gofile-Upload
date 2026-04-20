@@ -77,13 +77,12 @@ def upload_to_tempsh(file_path: Path):
             
             if resp.status_code == 200:
                 raw_link = resp.text.strip()
-                # Contoh raw_link: https://temp.sh/lEHoW/DarkVerseV3.zip
-                # Kita bedah link untuk ambil ID (lEHoW)
-                parts = raw_link.split('/')
-                if len(parts) >= 4:
-                    file_id = parts[3] # Ambil bahagian ID
-                    # BINA SEMULA LINK SECARA MANUAL DENGAN UNDERSCORE
-                    fixed_link = f"https://temp.sh/{file_id}/{filename}"
+                # Server buang underscore? Kita paksa letak balik.
+                # raw_link: https://temp.sh/ID/DarkVerseV3.zip
+                # Kita potong nama fail salah di hujung dan ganti dengan filename asal
+                if "/" in raw_link:
+                    base_url = raw_link.rsplit('/', 1)[0]
+                    fixed_link = f"{base_url}/{filename}"
                     return fixed_link
                 return raw_link
                 
