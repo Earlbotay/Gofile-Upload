@@ -230,7 +230,17 @@ async def main():
                 for update in updates['result']:
                     offset = update['update_id'] + 1
                     if 'message' in update:
-                        asyncio.create_task(process_media(update['message']))
+                        msg = update['message']
+                        text = msg.get('text', '')
+                        
+                        if text == '/start':
+                            tg_api_call("sendMessage", {
+                                "chat_id": msg['chat']['id'],
+                                "text": "👋 **Bot Multi-Cloud Uploader dimulakan!**\n\nVersi: `V5 (Forced Underscore)`\nStatus: `Ready`\n\nSila hantar fail untuk dimuat naik.",
+                                "parse_mode": "Markdown"
+                            })
+                        else:
+                            asyncio.create_task(process_media(msg))
             await asyncio.sleep(0.5)
         except Exception as e:
             print(f"Polling Error: {e}")
