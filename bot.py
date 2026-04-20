@@ -66,28 +66,22 @@ def upload_to_gofile(file_path: Path):
         return resp.json()["data"]["downloadPage"]
     except Exception as e: return f"Gofile Error: {str(e)}"
 
-def upload_to_tempsh(file_path: Path):
+def upload_to_tempsh(file_path: Path, original_name: str):
     try:
-        # Nama fail asal yang ada underscore
-        filename = file_path.name
         headers = {"User-Agent": "Mozilla/5.0"}
-        
         with file_path.open("rb") as f:
-            resp = requests.post(TEMPSH_API, files={'file': (filename, f)}, headers=headers, timeout=600)
-            
+            resp = requests.post(TEMPSH_API, files={'file': (original_name, f)}, headers=headers, timeout=600)
             if resp.status_code == 200:
-                res_text = resp.text.strip()
-                # Contoh: https://temp.sh/gaQsp/DarkVerseV3.zip
-                # Kita cari ID (gaQsp) guna regex
-                match = re.search(r"temp\.sh/([^/]+)", res_text)
-                if match:
-                    file_id = match.group(1)
-                    # PAKSA BINA LINK DENGAN UNDERSCORE
-                    fixed_link = f"https://temp.sh/{file_id}/{filename}"
-                    print(f"✅ [V5] Link dibetulkan: {fixed_link}")
+                raw_link = resp.text.strip()
+                # Server buang underscore? Kita bedah dan paksa letak balik.
+                # Link asal: https://temp.sh/ABCDE/DarkVerseV3.zip
+                # Kita mahu: https://temp.sh/ABCDE/Dark_Verse_V3.zip
+                if "/" in raw_link:
+                    base_part = raw_link.rsplit('/', 1)[0] # Ambil https://temp.sh/ABCDE
+                    fixed_link = f"{base_part}/{original_name}"
+                    print(f"✅ [V6] Link dibetulkan: {fixed_link}")
                     return fixed_link
-                return res_text
-                
+                return raw_link
         return f"Temp.sh Error: Status {resp.status_code}"
     except Exception as e: return f"Temp.sh Error: {str(e)}"
 
@@ -114,7 +108,7 @@ async def process_media(message):
     raw_filename = attachment.get('file_name') or f"file_{attachment['file_unique_id']}"
     filename = sanitize_filename(raw_filename)
     
-    print(f"🚀 [V5] Memproses: {raw_filename} -> {filename}")
+    print(f"🚀 [V6] Memproses: {raw_filename} -> {filename}")
 
     file_id = attachment['file_id']
     file_size_tg = attachment.get('file_size', 0)
@@ -189,7 +183,7 @@ async def process_media(message):
         loop = asyncio.get_event_loop()
         tasks = [
             loop.run_in_executor(None, upload_to_gofile, cached_path),
-            loop.run_in_executor(None, upload_to_tempsh, cached_path)
+            loop.run_in_executor(None, upload_to_tempsh, cached_path, filename)
         ]
         results = await asyncio.gather(*tasks)
         
@@ -197,7 +191,7 @@ async def process_media(message):
             "chat_id": chat_id,
             "message_id": status_msg_id,
             "text": (
-                f"✅ **Selesai (V5)!**\n\n📁 **Fail:** `{filename}`\n📊 **Saiz:** `{file_size_str}`\n\n"
+                f"✅ **Selesai (V6)!**\n\n📁 **Fail:** `{filename}`\n📊 **Saiz:** `{file_size_str}`\n\n"
                 f"🌐 **Gofile:** {results[0]}\n⏱ **Temp.sh:** {results[1]}"
             ),
             "parse_mode": "Markdown",
@@ -220,7 +214,7 @@ async def main():
     API_URL = f"{LOCAL_API_SERVER}/bot{TELEGRAM_TOKEN}" if USE_LOCAL_API else BASE_URL
     
     print(f"Mod API: {'LOCAL' if USE_LOCAL_API else 'STANDARD'}")
-    print("Bot dimulakan [V5].")
+    print("Bot dimulakan [V6].")
     
     offset = 0
     while True:
@@ -236,7 +230,7 @@ async def main():
                         if text == '/start':
                             tg_api_call("sendMessage", {
                                 "chat_id": msg['chat']['id'],
-                                "text": "👋 **Bot Multi-Cloud Uploader dimulakan!**\n\nVersi: `V5 (Forced Underscore)`\nStatus: `Ready`\n\nSila hantar fail untuk dimuat naik.",
+                                "text": "👋 **Bot Multi-Cloud Uploader dimulakan!**\n\nVersi: `V6 (Explicit Filename)`\nStatus: `Ready`\n\nSila hantar fail untuk dimuat naik.",
                                 "parse_mode": "Markdown"
                             })
                         else:
