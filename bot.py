@@ -73,37 +73,32 @@ async def upload_to_litterbox(file_path: Path):
             executablePath='/usr/bin/google-chrome' if os.path.exists('/usr/bin/google-chrome') else None
         )
         page = await browser.newPage()
-        
-        # Monitor Link via Alert
-        result = {"link": None}
-        async def handle_dialog(dialog):
-            if "https://litterbox.catbox.moe/" in dialog.message:
-                result["link"] = dialog.message
-            await dialog.dismiss()
-        page.on('dialog', lambda d: asyncio.ensure_future(handle_dialog(d)))
-
         await page.goto('https://litterbox.catbox.moe/', {'waitUntil': 'networkidle2'})
         
-        # Set Masa 72h secara paksa via JS
+        # Pilih 72h
         await page.evaluate('() => document.getElementById("72h").click()')
         
-        # Trigger Dropzone secara manual
+        # Muat naik fail
         input_file = await page.querySelector('input[type=file]')
         await input_file.uploadFile(str(file_path.absolute()))
         
-        # Tunggu maklum balas (Maksimum 10 minit)
+        # Tunggu link muncul di dalam input (berdasarkan screenshot)
+        # Link biasanya muncul dalam elemen input di dalam .dz-success
         start_time = time.time()
         while time.time() - start_time < 600:
-            if result["link"]: return result["link"].strip()
+            # Ambil semua input value yang mengandungi 'litter.catbox.moe'
+            link = await page.evaluate('''() => {
+                const inputs = Array.from(document.querySelectorAll('input'));
+                for (let i of inputs) {
+                    if (i.value.includes('litter.catbox.moe')) return i.value;
+                }
+                return null;
+            }''')
             
-            # Semak jika link muncul dalam teks (Fallback)
-            content = await page.evaluate('() => document.body.innerText')
-            found = re.findall(r'https://litterbox\.catbox\.moe/[a-zA-Z0-9]+\.[a-zA-Z0-9]+', content)
-            if found: return found[0].strip()
-            
+            if link: return link.strip()
             await asyncio.sleep(5)
             
-        return "Litterbox Timeout (Gunakan Gofile)"
+        return "Litterbox Timeout"
     except Exception as e:
         return f"Litterbox Error: {str(e)}"
     finally:
@@ -145,9 +140,8 @@ async def process_media(message):
     try:
         if not is_cached:
             file_info = tg_api_call("getFile", {"file_id": file_id})
-            if not file_info or not file_info.get('ok'): raise Exception("Info fail gagal")
+            if not file_info or not file_info.get('ok'): raise Exception("Gagal info fail")
             
-            # Download fail dari Telegram
             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info['result']['file_path']}"
             r = requests.get(file_url, stream=True)
             with open(cached_path, 'wb') as f: shutil.copyfileobj(r.raw, f)
@@ -155,11 +149,8 @@ async def process_media(message):
             index[file_unique_id] = {"path": str(cached_path), "name": filename}
             save_index(index)
 
-        if not cached_path.exists() or os.path.getsize(cached_path) == 0: raise Exception("Fail kosong")
-
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke Cloud...", "parse_mode": "Markdown"})
 
-        # Jalankan Gofile & Litterbox
         gofile_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_gofile, cached_path)
         litter_link = await upload_to_litterbox(cached_path)
         
