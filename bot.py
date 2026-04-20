@@ -6,7 +6,6 @@ import shutil
 import time
 import re
 from pathlib import Path
-from pyppeteer import launch
 
 # KONFIGURASI API
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -55,54 +54,18 @@ def sanitize_filename(name: str):
     clean = re.sub(r'_+', '_', clean)
     return clean.strip('_')
 
-def upload_to_gofile(file_path: Path):
+def upload_to_earlstore(file_path: Path):
     try:
-        s_resp = requests.get("https://api.gofile.io/servers", timeout=10).json()
-        server = s_resp["data"]["servers"][0]["name"]
+        url = "https://temp.earlstore.online/api/upload"
         with file_path.open("rb") as f:
-            resp = requests.post(f"https://{server}.gofile.io/contents/uploadfile", files={"file": (file_path.name, f)}, timeout=600)
-        return resp.json()["data"]["downloadPage"]
-    except: return "Gofile Error"
-
-async def upload_to_litterbox(file_path: Path):
-    browser = None
-    try:
-        browser = await launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-            executablePath='/usr/bin/google-chrome' if os.path.exists('/usr/bin/google-chrome') else None
-        )
-        page = await browser.newPage()
-        await page.goto('https://litterbox.catbox.moe/', {'waitUntil': 'networkidle2'})
+            resp = requests.post(url, files={"file": (file_path.name, f)}, timeout=600)
         
-        # Pilih 72h
-        await page.evaluate('() => document.getElementById("72h").click()')
-        
-        # Muat naik fail
-        input_file = await page.querySelector('input[type=file]')
-        await input_file.uploadFile(str(file_path.absolute()))
-        
-        # Tunggu link muncul di dalam input (berdasarkan screenshot)
-        # Link biasanya muncul dalam elemen input di dalam .dz-success
-        start_time = time.time()
-        while time.time() - start_time < 600:
-            # Ambil semua input value yang mengandungi 'litter.catbox.moe'
-            link = await page.evaluate('''() => {
-                const inputs = Array.from(document.querySelectorAll('input'));
-                for (let i of inputs) {
-                    if (i.value.includes('litter.catbox.moe')) return i.value;
-                }
-                return null;
-            }''')
-            
-            if link: return link.strip()
-            await asyncio.sleep(5)
-            
-        return "Litterbox Timeout"
+        data = resp.json()
+        if "url" in data:
+            return data["url"]
+        return f"Ralat: {json.dumps(data)}"
     except Exception as e:
-        return f"Litterbox Error: {str(e)}"
-    finally:
-        if browser: await browser.close()
+        return f"EarlStore Error: {str(e)}"
 
 async def process_media(message):
     chat_id = message['chat']['id']
@@ -149,10 +112,10 @@ async def process_media(message):
             index[file_unique_id] = {"path": str(cached_path), "name": filename}
             save_index(index)
 
-        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke Cloud...", "parse_mode": "Markdown"})
+        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke EarlStore...", "parse_mode": "Markdown"})
 
-        gofile_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_gofile, cached_path)
-        litter_link = await upload_to_litterbox(cached_path)
+        # Muat naik ke EarlStore secara asinkron (menggunakan run_in_executor untuk requests yang menyekat)
+        earl_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_earlstore, cached_path)
         
         tg_api_call("editMessageText", {
             "chat_id": chat_id, "message_id": status_id,
@@ -160,8 +123,7 @@ async def process_media(message):
                 f"✅ **Selesai!**\n\n"
                 f"📁 **Fail:** `{filename}`\n"
                 f"📊 **Saiz:** `{file_size_str}`\n\n"
-                f"🌐 **Gofile:** {gofile_link}\n"
-                f"🐱 **Litterbox (72h):** {litter_link}"
+                f"🌐 **Pautan:** {earl_link}"
             ),
             "parse_mode": "Markdown", "disable_web_page_preview": True
         })

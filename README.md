@@ -1,17 +1,17 @@
-# 🚀 Multi-Cloud-Uploader Bot
+# 🚀 Multi-Cloud-Uploader (EarlStore Edition)
 
-Bot Telegram hebat yang membolehkan anda muat naik sebarang jenis fail/media ke pelbagai cloud storage serentak!
+Bot Telegram hebat yang membolehkan anda muat naik sebarang jenis fail/media ke **EarlStore** (`https://temp.earlstore.online/`) secara automatik!
 
 ## ✨ Ciri-ciri Utama
-- ☁️ **Multi-Cloud Support:** Muat naik serentak ke **Gofile**, **Catbox**, dan **Temp.sh**.
+- ☁️ **Single-Cloud Focus:** Muat naik pantas ke EarlStore.
 - 📂 **Semua Format:** Menyokong Dokumen, Gambar, Video, Audio, Voice, dan Video Notes.
-- ⚡ **Pantas:** Muat naik dilakukan secara selari (*parallel*) untuk menjimatkan masa.
-- 🔄 **Auto-Run:** Berjalan secara automatik menggunakan GitHub Actions setiap 5 jam.
+- ⚡ **Pantas:** Proses muat naik yang dioptimumkan.
+- 🔄 **Auto-Run:** Berjalan secara automatik menggunakan GitHub Actions.
 
 ## 🛠️ Cara Guna
 1. Hantar sebarang fail kepada bot anda di Telegram.
 2. Tunggu bot memproses muat turun dan muat naik.
-3. Bot akan memberikan pautan muat turun bagi setiap cloud yang disokong.
+3. Bot akan memberikan pautan muat turun EarlStore.
 
 ## ⚙️ Konfigurasi (GitHub Secrets)
 Pastikan anda telah menetapkan *secret* berikut di dalam repositori anda:
