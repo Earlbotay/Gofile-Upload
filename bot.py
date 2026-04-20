@@ -68,20 +68,23 @@ def upload_to_gofile(file_path: Path):
 def upload_to_tempsh(file_path: Path):
     try:
         filename = file_path.name
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         
         with file_path.open("rb") as f:
-            # Kaedah 1: POST Multipart (Paling standard)
+            # KEUTAMAAN 1: PUT (Sangat berkesan untuk paksa nama fail dalam URL)
+            # URL format: https://temp.sh/nama_fail.zip
+            put_url = f"https://temp.sh/{filename}"
+            try:
+                resp = requests.put(put_url, data=f, headers=headers, timeout=600)
+                if resp.status_code == 200 and "http" in resp.text:
+                    return resp.text.strip()
+            except:
+                pass
+            
+            # KEUTAMAAN 2: POST (Sandaran jika PUT gagal)
+            f.seek(0)
             files = {'file': (filename, f)}
             resp = requests.post(TEMPSH_API, files=files, headers=headers, timeout=600)
-            
-            if resp.status_code == 200 and "http" in resp.text:
-                return resp.text.strip()
-            
-            # Kaedah 2: PUT (Jika POST gagal/502)
-            f.seek(0)
-            put_url = f"https://temp.sh/{filename}"
-            resp = requests.put(put_url, data=f, headers=headers, timeout=600)
             
             if resp.status_code == 200:
                 return resp.text.strip()
