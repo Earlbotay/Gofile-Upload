@@ -6,6 +6,7 @@ import shutil
 import time
 import re
 from pathlib import Path
+from pyppeteer import launch
 
 # KONFIGURASI API
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -51,33 +52,40 @@ def upload_to_gofile(file_path: Path):
         return resp.json()["data"]["downloadPage"]
     except: return "Gofile Error"
 
-def upload_to_tempsh(file_path: Path):
+async def upload_to_litterbox(file_path: Path):
+    browser = None
     try:
-        filename = file_path.name
-        with file_path.open("rb") as f:
-            resp = requests.post("https://temp.sh/upload", files={'file': (filename, f)}, timeout=600)
-            if resp.status_code == 200:
-                raw_link = resp.text.strip()
-                # Betulkan link secara automatik jika underscore hilang
-                if "temp.sh/" in raw_link:
-                    parts = raw_link.split('/')
-                    if len(parts) >= 4:
-                        file_id = parts[3]
-                        return f"https://temp.sh/{file_id}/{filename}"
-                return raw_link
-        return "Temp.sh Error"
-    except: return "Temp.sh Error"
-
-def upload_to_litterbox(file_path: Path):
-    try:
-        with file_path.open("rb") as f:
-            # Litterbox API: 72 jam simpanan
-            data = {"req": "fileupload", "time": "72h"}
-            files = {"fileToUpload": (file_path.name, f)}
-            resp = requests.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data, files=files, timeout=600)
-            return resp.text.strip()
+        # Launch browser (no-sandbox penting untuk server/Actions)
+        browser = await launch(
+            headless=True,
+            args=['--no-sandbox', '--disable-setuid-sandbox'],
+            executablePath='/usr/bin/google-chrome' if os.path.exists('/usr/bin/google-chrome') else None
+        )
+        page = await browser.newPage()
+        await page.goto('https://litterbox.catbox.moe/', {'timeout': 60000})
+        
+        # Pilih fail
+        input_file = await page.querySelector('input[type=file]')
+        await input_file.uploadFile(str(file_path.absolute()))
+        
+        # Pilih masa 72 jam (ia adalah pilihan default atau klik radio button)
+        await page.click('#threeDays')
+        
+        # Klik butang upload
+        await page.click('#uploadButton')
+        
+        # Tunggu link muncul (Litterbox memaparkan link dalam alert atau teks selepas selesai)
+        # Biasanya Litterbox akan redirect atau papar link di #upload-link
+        await page.waitForSelector('#upload-link', {'timeout': 600000}) # 10 minit
+        
+        # Ambil link
+        link = await page.evaluate('() => document.querySelector("#upload-link").innerText')
+        return link.strip()
     except Exception as e:
         return f"Litterbox Error: {str(e)}"
+    finally:
+        if browser:
+            await browser.close()
 
 async def process_media(message):
     chat_id = message['chat']['id']
@@ -117,14 +125,13 @@ async def process_media(message):
 
         if not cached_path.exists() or os.path.getsize(cached_path) == 0: raise Exception("Fail kosong")
 
-        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke 3 Cloud...", "parse_mode": "Markdown"})
+        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str})...", "parse_mode": "Markdown"})
 
-        loop = asyncio.get_event_loop()
-        res = await asyncio.gather(
-            loop.run_in_executor(None, upload_to_gofile, cached_path),
-            loop.run_in_executor(None, upload_to_tempsh, cached_path),
-            loop.run_in_executor(None, upload_to_litterbox, cached_path)
-        )
+        # Muat naik ke Gofile (API)
+        gofile_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_gofile, cached_path)
+        
+        # Muat naik ke Litterbox (Pyppeteer)
+        litter_link = await upload_to_litterbox(cached_path)
         
         tg_api_call("editMessageText", {
             "chat_id": chat_id, "message_id": status_id,
@@ -132,9 +139,8 @@ async def process_media(message):
                 f"✅ **Selesai!**\n\n"
                 f"📁 **Fail:** `{filename}`\n"
                 f"📊 **Saiz:** `{file_size_str}`\n\n"
-                f"🌐 **Gofile:** {res[0]}\n"
-                f"⏱ **Temp.sh:** {res[1]}\n"
-                f"🐱 **Litterbox (72h):** {res[2]}"
+                f"🌐 **Gofile:** {gofile_link}\n"
+                f"🐱 **Litterbox (72h):** {litter_link}"
             ),
             "parse_mode": "Markdown", "disable_web_page_preview": True
         })
@@ -159,7 +165,7 @@ async def main():
                     if 'message' in u:
                         m = u['message']
                         if m.get('text') == '/start':
-                            tg_api_call("sendMessage", {"chat_id": m['chat']['id'], "text": "👋 **Multi-Cloud Uploader Online**\n\nSila hantar fail anda."})
+                            tg_api_call("sendMessage", {"chat_id": m['chat']['id'], "text": "👋 **Bot Multi-Cloud (Gofile & Litterbox)**\n\nSila hantar fail anda."})
                         else:
                             asyncio.create_task(process_media(m))
             await asyncio.sleep(0.5)
