@@ -90,18 +90,18 @@ async def process_media(message):
     
     if is_cached:
         cached_path = Path(index[file_unique_id]['path'])
-        status_msg = f"⏳ Memproses `{filename}`... (⚡ Cache)"
+        status_msg = f"⏳ Memproses {filename}... (⚡ Cache)"
     else:
-        status_msg = f"⏳ Memproses `{filename}`..."
+        status_msg = f"⏳ Memproses {filename}..."
 
-    status = tg_api_call("sendMessage", {"chat_id": chat_id, "text": status_msg, "parse_mode": "Markdown"})
+    status = tg_api_call("sendMessage", {"chat_id": chat_id, "text": status_msg})
     if not status: return
     status_id = status['result']['message_id']
 
     try:
         # 3. Muat Turun (Jika tiada dalam cache)
         if not is_cached:
-            tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"📥 Memuat turun `{filename}` ({file_size_str})...", "parse_mode": "Markdown"})
+            tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"📥 Memuat turun {filename} ({file_size_str})..."})
             
             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{tg_file_path}"
             with requests.get(file_url, stream=True) as r:
@@ -112,7 +112,7 @@ async def process_media(message):
             save_index(index)
 
         # 4. Muat Naik ke EarlStore
-        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik ke EarlStore...", "parse_mode": "Markdown"})
+        tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik ke EarlStore..."})
         
         loop = asyncio.get_event_loop()
         earl_link = await loop.run_in_executor(None, upload_to_earlstore, cached_path)
@@ -121,12 +121,11 @@ async def process_media(message):
         tg_api_call("editMessageText", {
             "chat_id": chat_id, "message_id": status_id,
             "text": (
-                f"✅ **Selesai!**\n\n"
-                f"📁 **Fail:** `{filename}`\n"
-                f"📊 **Saiz:** `{file_size_str}`\n\n"
-                f"🌐 **Pautan:** {earl_link}"
+                f"✅ Selesai!\n\n"
+                f"📁 Fail: {filename}\n"
+                f"📊 Saiz: {file_size_str}\n\n"
+                f"🌐 Pautan: {earl_link}"
             ),
-            "parse_mode": "Markdown",
             "disable_web_page_preview": True
         })
 
