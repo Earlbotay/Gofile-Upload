@@ -19,13 +19,18 @@ CACHE_DIR.mkdir(exist_ok=True)
 if not CACHE_INDEX.exists():
     with open(CACHE_INDEX, "w") as f: json.dump({}, f)
 
+# Lock untuk simpan index supaya tidak rosak jika banyak fail serentak
+index_lock = asyncio.Lock()
+
 def load_index():
     try:
+        if not CACHE_INDEX.exists(): return {}
         with open(CACHE_INDEX, "r") as f: return json.load(f)
     except: return {}
 
-def save_index(index):
-    with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
+async def save_index_async(index):
+    async with index_lock:
+        with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
 def check_local_api():
     """Semak jika Local API Server sedang berjalan."""
@@ -112,8 +117,14 @@ async def process_media(message):
 
     tg_file_path = file_info['result']['file_path']
     ext = os.path.splitext(tg_file_path)[1] or ".bin"
+    
+    # Folder unik untuk setiap muat naik (TASK ISOLATION)
+    task_id = str(uuid.uuid4())[:8]
+    task_dir = CACHE_DIR / task_id
+    task_dir.mkdir(exist_ok=True)
+    
     filename = f"{file_unique_id}{ext}"
-    cached_path = CACHE_DIR / filename
+    cached_path = task_dir / filename
 
     index = load_index()
     is_cached = file_unique_id in index and Path(index[file_unique_id]['path']).exists()
@@ -152,8 +163,10 @@ async def process_media(message):
             if cached_path.stat().st_size == 0:
                 raise Exception("Muat turun berjaya tapi fail bersaiz 0MB.")
 
+            # Simpan dalam index secara selamat (Async Lock)
+            index = load_index()
             index[file_unique_id] = {"path": str(cached_path), "name": filename}
-            save_index(index)
+            await save_index_async(index)
 
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik ke EarlStore..."})
         
