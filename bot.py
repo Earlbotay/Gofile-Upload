@@ -71,10 +71,25 @@ async def process_media(message):
             break
     if not attachment: return
 
-    file_unique_id = attachment['file_unique_id']
-    filename = attachment.get('file_name') or f"file_{file_unique_id}"
     file_id = attachment['file_id']
+    file_unique_id = attachment['file_unique_id']
     file_size_str = f"{attachment.get('file_size', 0) / (1024*1024):.2f} MB"
+
+    # Dapatkan maklumat fail untuk tahu extension sebenar
+    file_info = tg_api_call("getFile", {"file_id": file_id})
+    if not file_info or not file_info.get('ok'):
+        tg_api_call("sendMessage", {"chat_id": chat_id, "text": "❌ Gagal mendapatkan maklumat fail daripada Telegram."})
+        return
+    
+    tg_file_path = file_info['result']['file_path']
+    extension = Path(tg_file_path).suffix # Contoh: .jpg, .mp4
+    
+    # Tentukan nama fail
+    orig_name = attachment.get('file_name')
+    if orig_name:
+        filename = orig_name
+    else:
+        filename = f"{file_unique_id}{extension}"
     
     index = load_index()
     cached_path = CACHE_DIR / filename
