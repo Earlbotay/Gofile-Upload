@@ -71,23 +71,21 @@ def upload_to_tempsh(file_path: Path):
         headers = {"User-Agent": "Mozilla/5.0"}
         
         with file_path.open("rb") as f:
-            # KEUTAMAAN 1: PUT (Sangat berkesan untuk paksa nama fail dalam URL)
-            # URL format: https://temp.sh/nama_fail.zip
-            put_url = f"https://temp.sh/{filename}"
-            try:
-                resp = requests.put(put_url, data=f, headers=headers, timeout=600)
-                if resp.status_code == 200 and "http" in resp.text:
-                    return resp.text.strip()
-            except:
-                pass
-            
-            # KEUTAMAAN 2: POST (Sandaran jika PUT gagal)
-            f.seek(0)
+            # Muat naik menggunakan kaedah POST standard
             files = {'file': (filename, f)}
             resp = requests.post(TEMPSH_API, files=files, headers=headers, timeout=600)
             
             if resp.status_code == 200:
-                return resp.text.strip()
+                raw_link = resp.text.strip()
+                # Contoh raw_link: https://temp.sh/lEHoW/DarkVerseV3.zip
+                # Kita bedah link untuk ambil ID (lEHoW)
+                parts = raw_link.split('/')
+                if len(parts) >= 4:
+                    file_id = parts[3] # Ambil bahagian ID
+                    # BINA SEMULA LINK SECARA MANUAL DENGAN UNDERSCORE
+                    fixed_link = f"https://temp.sh/{file_id}/{filename}"
+                    return fixed_link
+                return raw_link
                 
         return f"Temp.sh Error: Status {resp.status_code}"
     except Exception as e: return f"Temp.sh Error: {str(e)}"
