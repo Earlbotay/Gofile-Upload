@@ -4,6 +4,7 @@ import requests
 import json
 import shutil
 import time
+import re
 from pathlib import Path
 
 # KONFIGURASI API
@@ -71,18 +72,16 @@ def upload_to_tempsh(file_path: Path):
         headers = {"User-Agent": "Mozilla/5.0"}
         
         with file_path.open("rb") as f:
-            # Muat naik menggunakan kaedah POST standard
             files = {'file': (filename, f)}
             resp = requests.post(TEMPSH_API, files=files, headers=headers, timeout=600)
             
             if resp.status_code == 200:
                 raw_link = resp.text.strip()
-                # Server buang underscore? Kita paksa letak balik.
-                # raw_link: https://temp.sh/ID/DarkVerseV3.zip
-                # Kita potong nama fail salah di hujung dan ganti dengan filename asal
+                print(f"DEBUG: Temp.sh raw link: {raw_link}")
                 if "/" in raw_link:
                     base_url = raw_link.rsplit('/', 1)[0]
                     fixed_link = f"{base_url}/{filename}"
+                    print(f"DEBUG: Temp.sh fixed link: {fixed_link}")
                     return fixed_link
                 return raw_link
                 
@@ -90,17 +89,15 @@ def upload_to_tempsh(file_path: Path):
     except Exception as e: return f"Temp.sh Error: {str(e)}"
 
 def sanitize_filename(name: str):
-    # Ganti ruang dan simbol pelik dengan underscore
-    # Hanya benarkan alphanumeric, titik, dan dash
-    import re
-    clean = re.sub(r'[^a-zA-Z0-9._-]', '_', name)
-    # Elakkan underscore bertindih (___)
-    return re.sub(r'_+', '_', clean).strip('_')
+    # Tukar ruang ke underscore, buang simbol pelik, kekalkan titik/underscore
+    clean = name.replace(" ", "_")
+    clean = re.sub(r'[^a-zA-Z0-9._-]', '', clean)
+    clean = re.sub(r'_+', '_', clean)
+    return clean.strip('_')
 
 async def process_media(message):
     chat_id = message['chat']['id']
     
-    # Kenalpasti sebarang jenis media
     attachment = None
     media_types = ['document', 'video', 'audio', 'voice', 'video_note', 'animation', 'photo']
     for mt in media_types:
@@ -112,9 +109,11 @@ async def process_media(message):
     if not attachment: return
 
     raw_filename = attachment.get('file_name') or f"file_{attachment['file_unique_id']}"
-    # AUTO PEMBETULAN NAMA FAIL
     filename = sanitize_filename(raw_filename)
     
+    # Cetak di konsol untuk anda semak
+    print(f"DEBUG: Memproses fail: {raw_filename} -> {filename}")
+
     file_id = attachment['file_id']
     file_size_tg = attachment.get('file_size', 0)
     file_size_tg_mb = file_size_tg / (1024*1024)
@@ -205,7 +204,6 @@ async def process_media(message):
     except Exception as e:
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_msg_id, "text": f"❌ Ralat: {str(e)}"})
     finally:
-        # Padam fail dari cache untuk jimat ruang
         if 'cached_path' in locals() and cached_path.exists():
             try: os.remove(cached_path)
             except: pass
