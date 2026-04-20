@@ -6,6 +6,7 @@ import shutil
 import time
 import re
 import mimetypes
+import subprocess
 from pathlib import Path
 
 # KONFIGURASI API
@@ -52,22 +53,21 @@ def tg_api_call(method, data=None, files=None):
 def upload_to_earlstore(file_path: Path):
     try:
         url = "https://temp.earlstore.online/api/upload"
-        filename = file_path.name
+        # Kita guna curl secara terus untuk menjamin pautan "pure" mengikut dokumentasi
+        cmd = [
+            "curl", "-s",
+            "-F", f"file=@{file_path.absolute()}",
+            url
+        ]
         
-        # Teka MIME type berdasarkan extension fail
-        mime_type, _ = mimetypes.guess_type(filename)
-        if not mime_type:
-            mime_type = "application/octet-stream"
-
-        with file_path.open("rb") as f:
-            # Hantar (filename, fileobj, content_type) secara eksplisit
-            files = {"file": (filename, f, mime_type)}
-            resp = requests.post(url, files=files, timeout=600)
-        
-        data = resp.json()
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return f"Curl Error: {result.stderr}"
+            
+        data = json.loads(result.stdout)
         if "url" in data:
             return data["url"]
-        return f"Ralat: {json.dumps(data)}"
+        return f"Ralat: {result.stdout}"
     except Exception as e:
         return f"EarlStore Error: {str(e)}"
 
@@ -92,15 +92,10 @@ async def process_media(message):
         return
     
     tg_file_path = file_info['result']['file_path']
-    # Ambil extension daripada path Telegram (contoh: .jpg)
     ext = os.path.splitext(tg_file_path)[1]
-    
-    # Jika extension kosong (jarang berlaku), kita cuba teka atau guna .bin
-    if not ext:
-        ext = ".bin"
+    if not ext: ext = ".bin"
 
-    # Guna file_unique_id + extension sebagai nama fail rasmi untuk diupload
-    # Ini menjamin format sentiasa ada dalam request ke API
+    # Guna ID unik + extension
     filename = f"{file_unique_id}{ext}"
     
     index = load_index()
@@ -110,8 +105,6 @@ async def process_media(message):
     if file_unique_id in index:
         potential_path = Path(index[file_unique_id]['path'])
         if potential_path.exists():
-            # Jika fail asal tidak mempunyai extension dalam namanya di cache, 
-            # kita namakan semula fail cache tersebut supaya ada extension
             if potential_path.suffix != ext:
                 new_path = potential_path.with_suffix(ext)
                 potential_path.rename(new_path)
@@ -140,7 +133,7 @@ async def process_media(message):
 
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_id, "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke EarlStore...", "parse_mode": "Markdown"})
 
-        # Muat naik ke EarlStore secara asinkron (menggunakan run_in_executor untuk requests yang menyekat)
+        # Jalankan muat naik curl
         earl_link = await asyncio.get_event_loop().run_in_executor(None, upload_to_earlstore, cached_path)
         
         tg_api_call("editMessageText", {
