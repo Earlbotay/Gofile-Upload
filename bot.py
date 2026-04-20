@@ -67,18 +67,17 @@ def upload_to_gofile(file_path: Path):
 
 def upload_to_tempsh(file_path: Path):
     try:
-        # Nama fail tanpa ruang untuk Temp.sh
-        clean_name = file_path.name.replace(" ", "_")
+        # Nama fail yang sudah bersih
+        filename = file_path.name
+        # Guna kaedah PUT ke /upload/nama_fail untuk paksa server ikut nama kita
+        url = f"{TEMPSH_API}/{filename}"
+        
         with file_path.open("rb") as f:
-            # Menggunakan format multipart standard
-            files = {'file': (clean_name, f)}
-            resp = requests.post(TEMPSH_API, files=files, timeout=600)
+            resp = requests.put(url, data=f, timeout=600)
             
             if resp.status_code == 200:
                 link = resp.text.strip()
-                # Pastikan link bermula dengan http
-                if link.startswith("http"): return link
-                return f"Temp.sh Error: Respons tidak sah ({link})"
+                return link
             else:
                 return f"Temp.sh Error: Status {resp.status_code}"
     except Exception as e: return f"Temp.sh Error: {str(e)}"
