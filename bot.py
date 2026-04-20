@@ -52,7 +52,6 @@ def load_index():
 def save_index(index):
     with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
-CATBOX_API = "https://catbox.moe/user/api.php"
 TEMPSH_API = "https://temp.sh/upload"
 
 def upload_to_gofile(file_path: Path):
@@ -66,27 +65,22 @@ def upload_to_gofile(file_path: Path):
         return resp.json()["data"]["downloadPage"]
     except Exception as e: return f"Gofile Error: {str(e)}"
 
-def upload_to_catbox(file_path: Path):
-    try:
-        # Bersihkan nama fail (tukar ruang ke underscore)
-        clean_name = file_path.name.replace(" ", "_")
-        with file_path.open("rb") as f:
-            files = {
-                "req": (None, "upload"),
-                "fileToUpload": (clean_name, f)
-            }
-            # Jangan hantar headers manual, biar requests uruskan boundary
-            resp = requests.post(CATBOX_API, files=files, timeout=600)
-        return resp.text.strip()
-    except Exception as e: return f"Catbox Error: {str(e)}"
-
 def upload_to_tempsh(file_path: Path):
     try:
+        # Nama fail tanpa ruang untuk Temp.sh
         clean_name = file_path.name.replace(" ", "_")
         with file_path.open("rb") as f:
-            files = {"file": (clean_name, f)}
+            # Menggunakan format multipart standard
+            files = {'file': (clean_name, f)}
             resp = requests.post(TEMPSH_API, files=files, timeout=600)
-        return resp.text.strip()
+            
+            if resp.status_code == 200:
+                link = resp.text.strip()
+                # Pastikan link bermula dengan http
+                if link.startswith("http"): return link
+                return f"Temp.sh Error: Respons tidak sah ({link})"
+            else:
+                return f"Temp.sh Error: Status {resp.status_code}"
     except Exception as e: return f"Temp.sh Error: {str(e)}"
 
 async def process_media(message):
@@ -132,18 +126,14 @@ async def process_media(message):
         server_path = file_info['result']['file_path']
         
         if USE_LOCAL_API:
-            # Jika server_path adalah absolute path (biasanya dalam Local API)
             if server_path.startswith('/'):
                 host_file_path = Path(server_path)
             else:
-                # Jika relative, cuba bina laluan (bergantung kepada setting server)
                 host_file_path = Path(TELEGRAM_DATA_DIR) / f"bot{TELEGRAM_TOKEN}" / server_path.lstrip('/')
 
             if host_file_path.exists():
                 shutil.copy2(host_file_path, cached_path)
             else:
-                # Sandaran muat turun melalui URL Local
-                # Kita perlu pastikan laluan dalam URL tidak bermula dengan double slash
                 clean_path = server_path.lstrip('/')
                 file_download_url = f"{LOCAL_API_SERVER}/file/bot{TELEGRAM_TOKEN}/{clean_path}"
                 with requests.get(file_download_url, stream=True, timeout=600) as resp:
@@ -166,9 +156,6 @@ async def process_media(message):
         file_size_mb = file_size_bytes / (1024*1024)
         file_size_str = f"{file_size_mb:.2f} MB"
         
-        if file_size_bytes < 100: # Jika sangat kecil, kemungkinan besar ia fail ralat
-             print(f"Amaran: Saiz fail sangat kecil ({file_size_bytes} bait).")
-        
         index = load_index()
         index[filename] = {"size": file_size_str, "id": file_id}
         save_index(index)
@@ -176,7 +163,7 @@ async def process_media(message):
         tg_api_call("editMessageText", {
             "chat_id": chat_id, 
             "message_id": status_msg_id, 
-            "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke 3 Cloud...",
+            "text": f"🚀 Memuat naik `{filename}` ({file_size_str}) ke 2 Cloud...",
             "parse_mode": "Markdown"
         })
         tg_api_call("sendChatAction", {"chat_id": chat_id, "action": "upload_document"})
@@ -184,7 +171,6 @@ async def process_media(message):
         loop = asyncio.get_event_loop()
         tasks = [
             loop.run_in_executor(None, upload_to_gofile, cached_path),
-            loop.run_in_executor(None, upload_to_catbox, cached_path),
             loop.run_in_executor(None, upload_to_tempsh, cached_path)
         ]
         results = await asyncio.gather(*tasks)
@@ -194,13 +180,18 @@ async def process_media(message):
             "message_id": status_msg_id,
             "text": (
                 f"✅ **Selesai!**\n\n📁 **Fail:** `{filename}`\n📊 **Saiz:** `{file_size_str}`\n\n"
-                f"🌐 **Gofile:** {results[0]}\n🐱 **Catbox:** {results[1]}\n⏱ **Temp.sh:** {results[2]}"
+                f"🌐 **Gofile:** {results[0]}\n⏱ **Temp.sh:** {results[1]}"
             ),
             "parse_mode": "Markdown",
             "disable_web_page_preview": True
         })
     except Exception as e:
         tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": status_msg_id, "text": f"❌ Ralat: {str(e)}"})
+    finally:
+        # Padam fail dari cache untuk jimat ruang
+        if 'cached_path' in locals() and cached_path.exists():
+            try: os.remove(cached_path)
+            except: pass
 
 async def main():
     global USE_LOCAL_API, API_URL
