@@ -51,8 +51,12 @@ def tg_api_call(method, data=None, files=None):
 def upload_to_earlstore(file_path: Path):
     try:
         url = "https://temp.earlstore.online/api/upload"
+        # Pastikan kita hantar nama fail yang ada extension
+        filename = file_path.name
         with file_path.open("rb") as f:
-            resp = requests.post(url, files={"file": (file_path.name, f)}, timeout=600)
+            # Format (filename, fileobj, content_type) untuk lebih tepat
+            files = {"file": (filename, f)}
+            resp = requests.post(url, files=files, timeout=600)
         
         data = resp.json()
         if "url" in data:
