@@ -9,11 +9,16 @@ import math
 import uuid
 from pathlib import Path
 
+from concurrent.futures import ThreadPoolExecutor
+
 # --- KONFIGURASI ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 LOCAL_API_URL = "http://127.0.0.1:8081"
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
+
+# ThreadPoolExecutor dengan 999 workers untuk handle banyak tugas serentak
+executor = ThreadPoolExecutor(max_workers=999)
 
 CACHE_DIR.mkdir(exist_ok=True)
 if not CACHE_INDEX.exists():
@@ -184,18 +189,29 @@ async def process_media(message):
         safe_edit_message(chat_id, status_id, f"🚀 **Memuat naik ke EarlStore...**")
         
         loop = asyncio.get_event_loop()
-        # Pass chat_id and status_id to track progress
-        earl_link = await loop.run_in_executor(None, upload_to_earlstore, cached_path, chat_id, status_id)
+        # Gunakan executor khusus (999 workers) untuk muat naik
+        earl_link = await loop.run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
 
-        safe_edit_message(chat_id, status_id, (
+        if earl_link and "http" in str(earl_link):
+            final_caption = (
                 f"✅ **Selesai!**\n\n"
                 f"📁 **Fail:** `{filename}`\n"
                 f"📊 **Saiz:** {file_size_str}\n\n"
                 f"🌐 **Pautan:** {earl_link}"
-            ))
+            )
+            safe_edit_message(chat_id, status_id, final_caption)
+        else:
+            safe_edit_message(chat_id, status_id, f"❌ **Gagal:** API EarlStore tidak memulangkan link yang sah.\n\nRespon: `{earl_link}`")
 
     except Exception as e:
-        safe_edit_message(chat_id, status_id, f"❌ Ralat: {str(e)}")
+        safe_edit_message(chat_id, status_id, f"❌ **Ralat:** {str(e)}")
+    finally:
+        # PENTING: Bersihkan folder task selepas selesai untuk elakkan storan penuh
+        try:
+            if task_dir.exists():
+                shutil.rmtree(task_dir)
+        except:
+            pass
 
 async def main():
     if not TELEGRAM_TOKEN:
