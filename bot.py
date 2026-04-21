@@ -51,6 +51,7 @@ BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}" if IS_LOCAL else f"https://api
 print(f"INFO: Menggunakan {'Local API Server' if IS_LOCAL else 'Official Telegram API'}")
 
 def tg_api_call(method, data=None):
+    """Fungsi asal tetap ada untuk kegunaan internal."""
     try:
         url = f"{BASE_URL}/{method}"
         resp = requests.post(url, data=data, timeout=60)
@@ -59,11 +60,23 @@ def tg_api_call(method, data=None):
         print(f"API Error ({method}): {e}")
         return None
 
-def safe_edit_message(chat_id, message_id, text):
+async def tg_api_call_async(method, data=None):
+    """Telegram API call yang tidak menghalang (non-blocking)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, tg_api_call, method, data)
+
+def download_file_sync(url, dest):
+    """Download fail secara synchronous (untuk dijalankan dalam executor)."""
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(dest, 'wb') as f:
+            shutil.copyfileobj(r.raw, f)
+
+async def safe_edit_message(chat_id, message_id, text):
     """Cuba edit mesej (HTML), jika gagal, hantar mesej baru."""
-    res = tg_api_call("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"})
+    res = await tg_api_call_async("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"})
     if not res or not res.get("ok"):
-        return tg_api_call("sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+        return await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
     return res
 
 def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
@@ -104,7 +117,8 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
                         percent = int(((i + 1) / total_chunks) * 100)
                         bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
                         progress_text = f"🚀 <b>Memuat naik ke EarlStore...</b>\n\n<code>{bar}</code> {percent}%\n(Bahagian {i+1}/{total_chunks})"
-                        safe_edit_message(chat_id, status_id, progress_text)
+                        # Gunakan loop event loop untuk panggil async function dari thread
+                        asyncio.run_coroutine_threadsafe(safe_edit_message(chat_id, status_id, progress_text), asyncio.get_event_loop())
                         # Tambah delay 1 saat antara edit untuk elakkan Rate Limit Telegram
                         time.sleep(1)
                 else:
@@ -131,9 +145,9 @@ async def process_media(message):
     file_size_mb = attachment.get('file_size', 0) / (1024 * 1024)
     file_size_str = f"{file_size_mb:.2f} MB"
 
-    file_info = tg_api_call("getFile", {"file_id": file_id})
+    file_info = await tg_api_call_async("getFile", {"file_id": file_id})
     if not file_info or not file_info.get('ok'):
-        tg_api_call("sendMessage", {"chat_id": chat_id, "text": "❌ Gagal mendapatkan info fail."})
+        await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": "❌ Gagal mendapatkan info fail."})
         return
 
     tg_file_path = file_info['result']['file_path']
@@ -153,49 +167,45 @@ async def process_media(message):
     
     if is_cached:
         cached_path = Path(index[file_unique_id]['path'])
-        if cached_path.stat().st_size == 0:
-            is_cached = False
+        if cached_path.stat().st_size == 0: is_cached = False
 
     status_msg = f"⏳ Memproses <b>{safe_filename}</b>... {'(⚡ Cache)' if is_cached else ''}"
-    status = tg_api_call("sendMessage", {"chat_id": chat_id, "text": status_msg, "parse_mode": "HTML"})
+    status = await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": status_msg, "parse_mode": "HTML"})
     if not status: return
     status_id = status['result']['message_id']
 
     try:
+        loop = asyncio.get_event_loop()
         if not is_cached:
-            safe_edit_message(chat_id, status_id, f"📥 <b>Menyediakan fail:</b>\n<code>{safe_filename}</code> ({file_size_str})...")
+            await safe_edit_message(chat_id, status_id, f"📥 <b>Menyediakan fail:</b>\n<code>{safe_filename}</code> ({file_size_str})...")
             
             if IS_LOCAL:
                 source_path = Path(tg_file_path)
                 if source_path.exists():
-                    shutil.copy2(source_path, cached_path)
+                    await loop.run_in_executor(executor, shutil.copy2, source_path, cached_path)
                 else:
                     raise Exception(f"Fail tidak dijumpai di disk Local API: {tg_file_path}")
             else:
                 file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{tg_file_path}"
-                with requests.get(file_url, stream=True) as r:
-                    r.raise_for_status()
-                    with open(cached_path, 'wb') as f:
-                        shutil.copyfileobj(r.raw, f)
+                await loop.run_in_executor(executor, download_file_sync, file_url, cached_path)
             
-            if cached_path.stat().st_size == 0:
-                raise Exception("Muat turun berjaya tapi fail bersaiz 0MB.")
+            if cached_path.stat().st_size == 0: raise Exception("Muat turun berjaya tapi fail bersaiz 0MB.")
 
             # Simpan dalam index secara selamat (Async Lock)
             index = load_index()
             index[file_unique_id] = {"path": str(cached_path), "name": safe_filename}
             await save_index_async(index)
 
-        safe_edit_message(chat_id, status_id, f"🚀 <b>Memuat naik ke EarlStore...</b>")
+        await safe_edit_message(chat_id, status_id, f"🚀 <b>Memuat naik ke EarlStore...</b>")
         
-        loop = asyncio.get_event_loop()
+        # Gunakan executor khusus (999 workers) untuk muat naik
         print(f"DEBUG: Memulakan muat naik fail {safe_filename}...")
         earl_link = await loop.run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
         print(f"DEBUG: Muat naik selesai. Link: {earl_link}")
 
         if earl_link and "http" in str(earl_link):
             # Finalize progress
-            safe_edit_message(chat_id, status_id, f"✅ <b>Muat naik selesai!</b>\nSila semak mesej di bawah.")
+            await safe_edit_message(chat_id, status_id, f"✅ <b>Muat naik selesai!</b>\nSila semak mesej di bawah.")
             
             # Hantar HASIL (Link) sebagai MESEJ BARU
             final_caption = (
@@ -204,21 +214,19 @@ async def process_media(message):
                 f"📊 <b>Saiz:</b> {file_size_str}\n\n"
                 f"🌐 <b>Pautan:</b> {earl_link}"
             )
-            res = tg_api_call("sendMessage", {"chat_id": chat_id, "text": final_caption, "parse_mode": "HTML"})
+            res = await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": final_caption, "parse_mode": "HTML"})
             if not res or not res.get("ok"):
                 # Fallback jika gagal hantar mesej cantik
-                tg_api_call("sendMessage", {"chat_id": chat_id, "text": f"✅ Berjaya!\nLink: {earl_link}"})
+                await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": f"✅ Berjaya!\nLink: {earl_link}"})
         else:
-            safe_edit_message(chat_id, status_id, f"❌ <b>Gagal:</b> API tidak memulangkan link sah.\nRespon: <code>{html.escape(str(earl_link))}</code>")
+            await safe_edit_message(chat_id, status_id, f"❌ <b>Gagal:</b> API tidak memulangkan link sah.\nRespon: <code>{html.escape(str(earl_link))}</code>")
 
     except Exception as e:
-        safe_edit_message(chat_id, status_id, f"❌ <b>Ralat:</b> {html.escape(str(e))}")
+        await safe_edit_message(chat_id, status_id, f"❌ <b>Ralat:</b> {html.escape(str(e))}")
     finally:
         try:
-            if task_dir.exists():
-                shutil.rmtree(task_dir)
-        except:
-            pass
+            if task_dir.exists(): shutil.rmtree(task_dir)
+        except: pass
 
 async def main():
     if not TELEGRAM_TOKEN:
@@ -229,7 +237,7 @@ async def main():
     offset = 0
     while True:
         try:
-            updates = tg_api_call("getUpdates", {"offset": offset, "timeout": 30})
+            updates = await tg_api_call_async("getUpdates", {"offset": offset, "timeout": 30})
             if updates and updates.get('ok'):
                 for u in updates['result']:
                     offset = u['update_id'] + 1
