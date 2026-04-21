@@ -20,14 +20,14 @@ LOCAL_API_URL = "http://127.0.0.1:8081"
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
 
-# ThreadPoolExecutor dengan 999 workers untuk handle banyak tugas serentak
+# ThreadPoolExecutor dengan 999 workers
 executor = ThreadPoolExecutor(max_workers=999)
+main_loop = None # Akan diisi dalam main()
 
 CACHE_DIR.mkdir(exist_ok=True)
 if not CACHE_INDEX.exists():
     with open(CACHE_INDEX, "w") as f: json.dump({}, f)
 
-# Lock untuk simpan index supaya tidak rosak jika banyak fail serentak
 index_lock = asyncio.Lock()
 
 def load_index():
@@ -41,20 +41,15 @@ async def save_index_async(index):
         with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
 def check_local_api():
-    """Semak jika Local API Server sedang berjalan."""
     try:
         resp = requests.get(f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}/getMe", timeout=2)
         return resp.status_code == 200
-    except:
-        return False
+    except: return False
 
 IS_LOCAL = check_local_api()
 BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}" if IS_LOCAL else f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-print(f"INFO: Menggunakan {'Local API Server' if IS_LOCAL else 'Official Telegram API'}")
-
 def tg_api_call(method, data=None):
-    """Fungsi asal tetap ada untuk kegunaan internal."""
     try:
         url = f"{BASE_URL}/{method}"
         if data and "reply_markup" in data and isinstance(data["reply_markup"], dict):
@@ -66,35 +61,29 @@ def tg_api_call(method, data=None):
         return None
 
 async def tg_api_call_async(method, data=None):
-    """Telegram API call yang tidak menghalang (non-blocking)."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, tg_api_call, method, data)
 
 def download_file_sync(url, dest):
-    """Download fail secara synchronous."""
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
-        with open(dest, 'wb') as f:
-            shutil.copyfileobj(r.raw, f)
+        with open(dest, 'wb') as f: shutil.copyfileobj(r.raw, f)
 
 async def safe_edit_message(chat_id, message_id, text):
-    """Cuba edit mesej (HTML), jika gagal, hantar mesej baru."""
     res = await tg_api_call_async("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"})
     if not res or not res.get("ok"):
         return await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
     return res
 
 def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
-    """Memuat naik ke Earl File dengan progress update ke Telegram."""
     try:
         if not file_path.exists() or file_path.stat().st_size == 0:
-            return "❌ Ralat: Fail kosong atau tidak wujud di server."
+            return "❌ Ralat: Fail kosong atau tidak wujud."
 
         file_size = file_path.stat().st_size
-        chunk_size = 5 * 1024 * 1024  # 5MB
+        chunk_size = 5 * 1024 * 1024
         total_chunks = math.ceil(file_size / chunk_size)
         upload_id = str(uuid.uuid4())
-        
         final_url = None
 
         with open(file_path, "rb") as f:
@@ -115,19 +104,17 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
                             f"<code>{bar}</code> {percent}%\n"
                             f"<b>Bahagian {i+1}/{total_chunks}</b></blockquote>"
                         )
-                        asyncio.run_coroutine_threadsafe(safe_edit_message(chat_id, status_id, progress_text), asyncio.get_event_loop())
+                        # Gunakan main_loop yang disimpan secara global
+                        if main_loop:
+                            asyncio.run_coroutine_threadsafe(safe_edit_message(chat_id, status_id, progress_text), main_loop)
                         time.sleep(1)
-                else:
-                    return f"❌ EarlStore Error (Part {i+1}): {resp.text}"
+                else: return f"❌ Error API (Part {i+1}): {resp.text}"
 
-        return final_url or "❌ Error: Gagal mendapatkan URL akhir."
-    except Exception as e:
-        return f"❌ EarlStore Error: {str(e)}"
+        return final_url or "❌ Gagal mendapatkan URL akhir."
+    except Exception as e: return f"❌ Earl File Error: {str(e)}"
 
 async def process_media(message):
     chat_id = message['chat']['id']
-    
-    # Handle /start command
     if 'text' in message and message['text'].startswith('/start'):
         welcome_text = (
             "<blockquote><b>👋 Selamat Datang ke Earl File Bot!</b>\n\n"
@@ -152,7 +139,6 @@ async def process_media(message):
             attachment = message[mt]
             if mt == 'photo': attachment = attachment[-1]
             break
-            
     if not attachment: return
 
     file_id = attachment['file_id']
@@ -177,7 +163,6 @@ async def process_media(message):
 
     index = load_index()
     is_cached = file_unique_id in index and Path(index[file_unique_id]['path']).exists()
-    
     if is_cached:
         cached_path = Path(index[file_unique_id]['path'])
         if cached_path.stat().st_size == 0: is_cached = False
@@ -188,15 +173,16 @@ async def process_media(message):
     status_id = status['result']['message_id']
 
     try:
+        loop = asyncio.get_event_loop()
         if not is_cached:
             await safe_edit_message(chat_id, status_id, f"<blockquote>📥 <b>Menyediakan fail:</b>\n<code>{safe_filename}</code> ({file_size_str})...</blockquote>")
             if IS_LOCAL:
                 source_path = Path(tg_file_path)
-                if source_path.exists(): await asyncio.get_event_loop().run_in_executor(executor, shutil.copy2, source_path, cached_path)
+                if source_path.exists(): await loop.run_in_executor(executor, shutil.copy2, source_path, cached_path)
                 else: raise Exception(f"Fail tidak dijumpai di disk: {tg_file_path}")
             else:
                 file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{tg_file_path}"
-                await asyncio.get_event_loop().run_in_executor(executor, download_file_sync, file_url, cached_path)
+                await loop.run_in_executor(executor, download_file_sync, file_url, cached_path)
             
             if cached_path.stat().st_size == 0: raise Exception("Fail bersaiz 0MB.")
             index = load_index()
@@ -204,7 +190,7 @@ async def process_media(message):
             await save_index_async(index)
 
         await safe_edit_message(chat_id, status_id, f"<blockquote>🚀 <b>Earl File...</b></blockquote>")
-        earl_link = await asyncio.get_event_loop().run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
+        earl_link = await loop.run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
 
         if earl_link and "http" in str(earl_link):
             await safe_edit_message(chat_id, status_id, f"<blockquote>✅ <b>Muat naik selesai!</b>\nSila semak mesej di bawah.</blockquote>")
@@ -217,7 +203,6 @@ async def process_media(message):
             await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": final_caption, "parse_mode": "HTML"})
         else:
             await safe_edit_message(chat_id, status_id, f"<blockquote>❌ <b>Gagal:</b> API tidak memulangkan link sah.\nRespon API: <code>{html.escape(str(earl_link))}</code></blockquote>")
-
     except Exception as e:
         await safe_edit_message(chat_id, status_id, f"<blockquote>❌ <b>Ralat:</b> {html.escape(str(e))}</blockquote>")
     finally:
@@ -226,7 +211,9 @@ async def process_media(message):
         except: pass
 
 async def main():
+    global main_loop
     if not TELEGRAM_TOKEN: return
+    main_loop = asyncio.get_running_loop()
     print(f"🤖 Bot Earl File dimulakan...")
     offset = 0
     while True:
@@ -237,8 +224,7 @@ async def main():
                     offset = u['update_id'] + 1
                     if 'message' in u: asyncio.create_task(process_media(u['message']))
             await asyncio.sleep(0.5)
-        except Exception as e:
-            await asyncio.sleep(5)
+        except Exception as e: await asyncio.sleep(5)
 
 if __name__ == "__main__":
     asyncio.run(main())
