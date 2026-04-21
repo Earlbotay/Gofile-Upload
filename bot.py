@@ -196,17 +196,18 @@ async def process_media(message):
         earl_link = await loop.run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
         print(f"DEBUG: Muat naik selesai. Link: {earl_link}")
 
-        # Tambah delay sedikit supaya Telegram tak pening (Rate Limit)
-        await asyncio.sleep(1)
-
         if earl_link and "http" in str(earl_link):
+            # Finalize mesej progress lama
+            safe_edit_message(chat_id, status_id, f"✅ **Muat naik selesai!**\nSila semak mesej di bawah untuk pautan.")
+            
+            # Hantar HASIL (Link) sebagai MESEJ BARU
             final_caption = (
-                f"✅ **Selesai!**\n\n"
+                f"🔗 **Pautan EarlStore Berjaya Dicipta!**\n\n"
                 f"📁 **Fail:** `{filename}`\n"
                 f"📊 **Saiz:** {file_size_str}\n\n"
                 f"🌐 **Pautan:** {earl_link}"
             )
-            safe_edit_message(chat_id, status_id, final_caption)
+            tg_api_call("sendMessage", {"chat_id": chat_id, "text": final_caption, "parse_mode": "Markdown"})
         else:
             safe_edit_message(chat_id, status_id, f"❌ **Gagal:** API EarlStore tidak memulangkan link yang sah.\n\nRespon API: `{earl_link}`")
 
