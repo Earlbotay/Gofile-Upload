@@ -22,7 +22,6 @@ BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}"
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
 
-# ThreadPoolExecutor dengan 999 workers
 executor = ThreadPoolExecutor(max_workers=999)
 main_loop = None
 
@@ -53,7 +52,6 @@ def tg_api_call(method, data=None):
         url = f"{BASE_URL}/{method}"
         if data and "reply_markup" in data and isinstance(data["reply_markup"], dict):
             data["reply_markup"] = json.dumps(data["reply_markup"])
-        # Timeout dinaikkan ke 1000 saat untuk fail besar
         resp = requests.post(url, data=data, timeout=1000)
         return resp.json()
     except Exception as e:
@@ -63,6 +61,11 @@ def tg_api_call(method, data=None):
 async def tg_api_call_async(method, data=None):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, tg_api_call, method, data)
+
+def download_file_sync(url, dest):
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(dest, 'wb') as f: shutil.copyfileobj(r.raw, f)
 
 async def safe_edit_message(chat_id, message_id, text):
     res = await tg_api_call_async("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"})
@@ -109,6 +112,8 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
 
 async def process_media(message):
     chat_id = message['chat']['id']
+    
+    # Handle /start command
     if 'text' in message and message['text'].startswith('/start'):
         welcome_text = (
             "<blockquote><b>👋 Selamat Datang ke Earl File Bot!</b>\n\n"
@@ -116,8 +121,8 @@ async def process_media(message):
             "<b>Cara Guna:</b>\n"
             "1. Hantar sebarang media ke sini.\n"
             "2. Tunggu bot memproses muat naik.\n"
-            "3. Bot akan memberikan pautan hasil muat turun.</blockquote>\n\n"
-            "<i>Dibina untuk kelajuan tinggi. Selamat mencuba!</i>"
+            "3. Bot akan memberikan pautan hasil muat turun.\n\n"
+            "<i>Dibina untuk kelajuan tinggi. Selamat mencuba!</i></blockquote>"
         )
         markup = {"inline_keyboard": [[{"text": "🌐 LINK WEB", "url": WEB_URL, "style": "danger"}]]}
         await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": welcome_text, "parse_mode": "HTML", "reply_markup": markup})
@@ -131,7 +136,6 @@ async def process_media(message):
             break
     if not attachment: return
 
-    # NOTIFIKASI AWAL: Supaya user tahu bot dah terima media
     initial_msg = "<blockquote>⚡ <b>Tugasan diterima!</b>\nMenghubungi Telegram API untuk mendapatkan info fail...</blockquote>"
     status = await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": initial_msg, "parse_mode": "HTML"})
     if not status: return
@@ -142,7 +146,6 @@ async def process_media(message):
     file_size_mb = attachment.get('file_size', 0) / (1024 * 1024)
     file_size_str = f"{file_size_mb:.2f} MB"
 
-    # Get file info
     file_info = await tg_api_call_async("getFile", {"file_id": file_id})
     if not file_info or not file_info.get('ok'):
         desc = file_info.get('description', 'Tiada respon / Timeout') if file_info else 'Timeout'
