@@ -16,8 +16,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 DOMAIN = os.getenv("DOMAIN", "temp.earlstore.online")
 UPLOAD_URL = f"https://{DOMAIN}/api/upload"
 WEB_URL = f"https://{DOMAIN}"
-
-# WAJIB guna Local API Server untuk sokongan 2GB
 LOCAL_API_URL = "http://127.0.0.1:8081"
 BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}"
 
@@ -45,7 +43,6 @@ async def save_index_async(index):
         with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
 def check_local_api():
-    """Wajibkan semakan Local API."""
     try:
         resp = requests.get(f"{BASE_URL}/getMe", timeout=2)
         return resp.status_code == 200
@@ -56,7 +53,8 @@ def tg_api_call(method, data=None):
         url = f"{BASE_URL}/{method}"
         if data and "reply_markup" in data and isinstance(data["reply_markup"], dict):
             data["reply_markup"] = json.dumps(data["reply_markup"])
-        resp = requests.post(url, data=data, timeout=60)
+        # Timeout dinaikkan ke 1000 saat untuk fail besar
+        resp = requests.post(url, data=data, timeout=1000)
         return resp.json()
     except Exception as e:
         print(f"API Error ({method}): {e}")
@@ -73,13 +71,12 @@ async def safe_edit_message(chat_id, message_id, text):
     return res
 
 def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
-    """Memuat naik ke Earl File dengan progress update."""
     try:
         if not file_path.exists() or file_path.stat().st_size == 0:
             return "❌ Ralat: Fail kosong atau tidak wujud."
 
         file_size = file_path.stat().st_size
-        chunk_size = 5 * 1024 * 1024  # 5MB chunks
+        chunk_size = 5 * 1024 * 1024
         total_chunks = math.ceil(file_size / chunk_size)
         upload_id = str(uuid.uuid4())
         final_url = None
@@ -112,8 +109,6 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
 
 async def process_media(message):
     chat_id = message['chat']['id']
-    
-    # Handle /start command
     if 'text' in message and message['text'].startswith('/start'):
         welcome_text = (
             "<blockquote><b>👋 Selamat Datang ke Earl File Bot!</b>\n\n"
@@ -136,20 +131,22 @@ async def process_media(message):
             break
     if not attachment: return
 
+    # NOTIFIKASI AWAL: Supaya user tahu bot dah terima media
+    initial_msg = "<blockquote>⚡ <b>Tugasan diterima!</b>\nMenghubungi Telegram API untuk mendapatkan info fail...</blockquote>"
+    status = await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": initial_msg, "parse_mode": "HTML"})
+    if not status: return
+    status_id = status['result']['message_id']
+
     file_id = attachment['file_id']
     file_unique_id = attachment['file_unique_id']
     file_size_mb = attachment.get('file_size', 0) / (1024 * 1024)
     file_size_str = f"{file_size_mb:.2f} MB"
 
-    # Get file info with detailed error reporting
+    # Get file info
     file_info = await tg_api_call_async("getFile", {"file_id": file_id})
     if not file_info or not file_info.get('ok'):
-        desc = file_info.get('description', 'Tiada respon dari API') if file_info else 'Timeout'
-        await tg_api_call_async("sendMessage", {
-            "chat_id": chat_id, 
-            "text": f"<blockquote>❌ <b>Gagal mendapatkan info fail.</b>\nRespon: <code>{html.escape(desc)}</code></blockquote>", 
-            "parse_mode": "HTML"
-        })
+        desc = file_info.get('description', 'Tiada respon / Timeout') if file_info else 'Timeout'
+        await safe_edit_message(chat_id, status_id, f"<blockquote>❌ <b>Gagal mendapatkan info fail.</b>\nRespon: <code>{html.escape(desc)}</code></blockquote>")
         return
 
     tg_file_path = file_info['result']['file_path']
@@ -167,22 +164,14 @@ async def process_media(message):
         cached_path = Path(index[file_unique_id]['path'])
         if cached_path.stat().st_size == 0: is_cached = False
 
-    status_msg = f"<blockquote>⏳ Memproses <b>{safe_filename}</b>... {'(⚡ Cache)' if is_cached else ''}</blockquote>"
-    status = await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": status_msg, "parse_mode": "HTML"})
-    if not status: return
-    status_id = status['result']['message_id']
-
     try:
         if not is_cached:
             await safe_edit_message(chat_id, status_id, f"<blockquote>📥 <b>Menyediakan fail:</b>\n<code>{safe_filename}</code> ({file_size_str})...</blockquote>")
-            
-            # Oleh kerana kita guna Local API, tg_file_path biasanya path penuh pada disk
             source_path = Path(tg_file_path)
             if source_path.exists():
                 await asyncio.get_event_loop().run_in_executor(executor, shutil.copy2, source_path, cached_path)
             else:
-                # Jika bukan path penuh, ia mungkin path relatif dalam folder data Local API
-                raise Exception(f"Fail tidak dijumpai di: {tg_file_path}")
+                raise Exception(f"Fail tidak dijumpai di disk: {tg_file_path}")
             
             if cached_path.stat().st_size == 0: raise Exception("Fail bersaiz 0MB.")
             index = load_index()
@@ -215,12 +204,10 @@ async def main():
     if not TELEGRAM_TOKEN:
         print("Ralat: TELEGRAM_TOKEN tidak ditetapkan!")
         return
-        
-    print(f"🤖 Bot Earl File dimulakan (Strict Local API: {LOCAL_API_URL})...")
+    print(f"🤖 Bot Earl File dimulakan (Strict Local API)...")
     if not check_local_api():
-        print("KRITIKAL: Local Bot API Server tidak dikesan! Bot akan berhenti.")
+        print("KRITIKAL: Local Bot API Server tidak dikesan!")
         return
-
     main_loop = asyncio.get_running_loop()
     offset = 0
     while True:
