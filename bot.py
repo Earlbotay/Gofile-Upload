@@ -16,13 +16,17 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 DOMAIN = os.getenv("DOMAIN", "temp.earlstore.online")
 UPLOAD_URL = f"https://{DOMAIN}/api/upload"
 WEB_URL = f"https://{DOMAIN}"
+
+# WAJIB guna Local API Server untuk sokongan 2GB
 LOCAL_API_URL = "http://127.0.0.1:8081"
+BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}"
+
 CACHE_DIR = Path("bot_cache")
 CACHE_INDEX = CACHE_DIR / "index.json"
 
 # ThreadPoolExecutor dengan 999 workers
 executor = ThreadPoolExecutor(max_workers=999)
-main_loop = None # Akan diisi dalam main()
+main_loop = None
 
 CACHE_DIR.mkdir(exist_ok=True)
 if not CACHE_INDEX.exists():
@@ -41,13 +45,11 @@ async def save_index_async(index):
         with open(CACHE_INDEX, "w") as f: json.dump(index, f, indent=4)
 
 def check_local_api():
+    """Wajibkan semakan Local API."""
     try:
-        resp = requests.get(f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}/getMe", timeout=2)
+        resp = requests.get(f"{BASE_URL}/getMe", timeout=2)
         return resp.status_code == 200
     except: return False
-
-IS_LOCAL = check_local_api()
-BASE_URL = f"{LOCAL_API_URL}/bot{TELEGRAM_TOKEN}" if IS_LOCAL else f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 def tg_api_call(method, data=None):
     try:
@@ -64,11 +66,6 @@ async def tg_api_call_async(method, data=None):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, tg_api_call, method, data)
 
-def download_file_sync(url, dest):
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(dest, 'wb') as f: shutil.copyfileobj(r.raw, f)
-
 async def safe_edit_message(chat_id, message_id, text):
     res = await tg_api_call_async("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"})
     if not res or not res.get("ok"):
@@ -76,12 +73,13 @@ async def safe_edit_message(chat_id, message_id, text):
     return res
 
 def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
+    """Memuat naik ke Earl File dengan progress update."""
     try:
         if not file_path.exists() or file_path.stat().st_size == 0:
             return "❌ Ralat: Fail kosong atau tidak wujud."
 
         file_size = file_path.stat().st_size
-        chunk_size = 5 * 1024 * 1024
+        chunk_size = 5 * 1024 * 1024  # 5MB chunks
         total_chunks = math.ceil(file_size / chunk_size)
         upload_id = str(uuid.uuid4())
         final_url = None
@@ -104,7 +102,6 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
                             f"<code>{bar}</code> {percent}%\n"
                             f"<b>Bahagian {i+1}/{total_chunks}</b></blockquote>"
                         )
-                        # Gunakan main_loop yang disimpan secara global
                         if main_loop:
                             asyncio.run_coroutine_threadsafe(safe_edit_message(chat_id, status_id, progress_text), main_loop)
                         time.sleep(1)
@@ -115,19 +112,17 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
 
 async def process_media(message):
     chat_id = message['chat']['id']
+    
+    # Handle /start command
     if 'text' in message and message['text'].startswith('/start'):
         welcome_text = (
             "<blockquote><b>👋 Selamat Datang ke Earl File Bot!</b>\n\n"
-            "Saya boleh membantu anda memuat naik fail ke <b>Earl File</b> dengan pantas dan selamat.\n\n"
+            "Saya dioptimumkan untuk memproses fail sehingga <b>2GB</b> melalui Local Bot API.\n\n"
             "<b>Cara Guna:</b>\n"
             "1. Hantar sebarang media ke sini.\n"
             "2. Tunggu bot memproses muat naik.\n"
-            "3. Bot akan memberikan pautan hasil.\n\n"
-            "<b>Ciri-ciri:</b>\n"
-            "✅ Sokongan fail besar.\n"
-            "✅ Pemprosesan serentak.\n"
-            "✅ Progress bar masa nyata.\n\n"
-            "<i>Dibina untuk kelajuan. Selamat mencuba!</i></blockquote>"
+            "3. Bot akan memberikan pautan hasil muat turun.</blockquote>\n\n"
+            "<i>Dibina untuk kelajuan tinggi. Selamat mencuba!</i>"
         )
         markup = {"inline_keyboard": [[{"text": "🌐 LINK WEB", "url": WEB_URL, "style": "danger"}]]}
         await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": welcome_text, "parse_mode": "HTML", "reply_markup": markup})
@@ -146,9 +141,15 @@ async def process_media(message):
     file_size_mb = attachment.get('file_size', 0) / (1024 * 1024)
     file_size_str = f"{file_size_mb:.2f} MB"
 
+    # Get file info with detailed error reporting
     file_info = await tg_api_call_async("getFile", {"file_id": file_id})
     if not file_info or not file_info.get('ok'):
-        await tg_api_call_async("sendMessage", {"chat_id": chat_id, "text": "<blockquote>❌ Gagal mendapatkan info fail.</blockquote>", "parse_mode": "HTML"})
+        desc = file_info.get('description', 'Tiada respon dari API') if file_info else 'Timeout'
+        await tg_api_call_async("sendMessage", {
+            "chat_id": chat_id, 
+            "text": f"<blockquote>❌ <b>Gagal mendapatkan info fail.</b>\nRespon: <code>{html.escape(desc)}</code></blockquote>", 
+            "parse_mode": "HTML"
+        })
         return
 
     tg_file_path = file_info['result']['file_path']
@@ -158,8 +159,7 @@ async def process_media(message):
     task_id = str(uuid.uuid4())[:8]
     task_dir = CACHE_DIR / task_id
     task_dir.mkdir(exist_ok=True)
-    filename = f"{file_unique_id}{ext}"
-    cached_path = task_dir / filename
+    cached_path = task_dir / f"{file_unique_id}{ext}"
 
     index = load_index()
     is_cached = file_unique_id in index and Path(index[file_unique_id]['path']).exists()
@@ -173,16 +173,16 @@ async def process_media(message):
     status_id = status['result']['message_id']
 
     try:
-        loop = asyncio.get_event_loop()
         if not is_cached:
             await safe_edit_message(chat_id, status_id, f"<blockquote>📥 <b>Menyediakan fail:</b>\n<code>{safe_filename}</code> ({file_size_str})...</blockquote>")
-            if IS_LOCAL:
-                source_path = Path(tg_file_path)
-                if source_path.exists(): await loop.run_in_executor(executor, shutil.copy2, source_path, cached_path)
-                else: raise Exception(f"Fail tidak dijumpai di disk: {tg_file_path}")
+            
+            # Oleh kerana kita guna Local API, tg_file_path biasanya path penuh pada disk
+            source_path = Path(tg_file_path)
+            if source_path.exists():
+                await asyncio.get_event_loop().run_in_executor(executor, shutil.copy2, source_path, cached_path)
             else:
-                file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{tg_file_path}"
-                await loop.run_in_executor(executor, download_file_sync, file_url, cached_path)
+                # Jika bukan path penuh, ia mungkin path relatif dalam folder data Local API
+                raise Exception(f"Fail tidak dijumpai di: {tg_file_path}")
             
             if cached_path.stat().st_size == 0: raise Exception("Fail bersaiz 0MB.")
             index = load_index()
@@ -190,7 +190,7 @@ async def process_media(message):
             await save_index_async(index)
 
         await safe_edit_message(chat_id, status_id, f"<blockquote>🚀 <b>Earl File...</b></blockquote>")
-        earl_link = await loop.run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
+        earl_link = await asyncio.get_event_loop().run_in_executor(executor, upload_to_earlstore, cached_path, chat_id, status_id)
 
         if earl_link and "http" in str(earl_link):
             await safe_edit_message(chat_id, status_id, f"<blockquote>✅ <b>Muat naik selesai!</b>\nSila semak mesej di bawah.</blockquote>")
@@ -212,9 +212,16 @@ async def process_media(message):
 
 async def main():
     global main_loop
-    if not TELEGRAM_TOKEN: return
+    if not TELEGRAM_TOKEN:
+        print("Ralat: TELEGRAM_TOKEN tidak ditetapkan!")
+        return
+        
+    print(f"🤖 Bot Earl File dimulakan (Strict Local API: {LOCAL_API_URL})...")
+    if not check_local_api():
+        print("KRITIKAL: Local Bot API Server tidak dikesan! Bot akan berhenti.")
+        return
+
     main_loop = asyncio.get_running_loop()
-    print(f"🤖 Bot Earl File dimulakan...")
     offset = 0
     while True:
         try:
