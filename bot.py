@@ -105,6 +105,8 @@ def upload_to_earlstore(file_path: Path, chat_id=None, status_id=None):
                         bar = "█" * (percent // 10) + "░" * (10 - (percent // 10))
                         progress_text = f"🚀 **Memuat naik ke EarlStore...**\n\n`{bar}` {percent}%\n(Bahagian {i+1}/{total_chunks})"
                         safe_edit_message(chat_id, status_id, progress_text)
+                        # Tambah delay 1 saat antara edit untuk elakkan Rate Limit Telegram
+                        time.sleep(1)
                 else:
                     return f"❌ EarlStore Error (Part {i+1}): {resp.text}"
 
